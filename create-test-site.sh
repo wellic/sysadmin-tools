@@ -273,7 +273,7 @@ function fixDrupalSettings {
 #  COMMANDS["download_stage_file_proxy"]="-r ${NEW_SITE_PUBLIC} dl stage_file_proxy"
 #  COMMANDS["enable_stage_file_proxy"]="-r ${NEW_SITE_PUBLIC} -y en stage_file_proxy"
 # baah. associative array order seems to be kinda random...
-  COMMANDS[1]="-r ${NEW_SITE_PUBLIC} vset site_name \'${NEW_SITENAME}\'"
+  COMMANDS[1]="-r ${NEW_SITE_PUBLIC} vset site_name \"${NEW_SITENAME}\""
   COMMANDS[2]="-r ${NEW_SITE_PUBLIC} vset file_temporary_path ${NEW_SITE}/tmp/"
   COMMANDS[3]="-r ${NEW_SITE_PUBLIC} vset error_level 2"
   COMMANDS[4]="-r ${NEW_SITE_PUBLIC} dl stage_file_proxy"
