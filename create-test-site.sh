@@ -2,6 +2,7 @@
 
 # TODO
 # Fix cloning sites with subdomains, xxx.bellcom.dk. Seems to fail now
+# Add the new .devel.dk domain to /etc/hosts
 # SSH keys? Sudo?
 
 declare -A SETTINGS
