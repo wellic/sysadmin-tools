@@ -2,22 +2,30 @@
 
 # TODO
 # Fix cloning sites with subdomains, xxx.bellcom.dk. Seems to fail now
-# Add the new .devel.dk domain to /etc/hosts
 # SSH keys? Sudo?
+# Lots of cleanup :)
 
 declare -A SETTINGS
 SETTINGS["quiet"]=false
-SETTINGS["use-remote-host"]=false
-SETTINGS["remote-host"]='localhost'
-SETTINGS["override-existing"]=false
+SETTINGS["use-remote-host"]=true
+SETTINGS["remote-host"]='devel.bellcom.dk'
+SETTINGS["overwrite-existing"]=false
 SETTINGS["new-domain-name-suffix"]="devel.dk"
 SETTINGS["site-type"]="drupal"
 SETTINGS["site-version"]="7"
 SETTINGS["tmp-dir"]="/var/www/00-backup"
 SETTINGS["vhost-url"]="http://tools.bellcom.dk/vhost.txt"
 SETTINGS["database-admin-username"]="root"
+SETTINGS["remote-host-ip"]=$(dig +short ${SETTINGS["remote-host"]})
 # TODO. Find a better way to get sensitive information
 SETTINGS["database-admin-password"]=$(cat /root/.mysql_password)
+
+EXISTING_VHOSTNAME=$1
+if [[ ! -z ${SETTINGS["new-domain-name-suffix"]} ]]; then
+  NEW_VHOSTNAME="${1}.${SETTINGS["new-domain-name-suffix"]}"
+else
+  NEW_VHOSTNAME="${1}"
+fi
 
 # A ":" after a flag indicates it will have an option passed with it.
 OPTIONS='ohqr:d:'
@@ -42,7 +50,7 @@ $0 [OPTION] vhost dest
 -h          this help
 -q          be quiet
 -r VALUE    remote host
--o          override existing site
+-o          overwrite existing site
 -d VALUE    append VALUE to vhost name
 EOF
 }
@@ -52,7 +60,7 @@ do
     case $OPTION in
         h  ) usage; exit;;
         q  ) SETTINGS["quiet"]=true;;
-        o  ) SETTINGS["override-existing"]=true;;
+        o  ) SETTINGS["overwrite-existing"]=true;;
         r  ) SETTINGS["remote-host"]=$OPTARG; SETTINGS["use-remote-host"]=true;;
         d  ) SETTINGS["new-domain-name-suffix"]=$OPTARG;;
         \? ) echo "Unknown option: -$OPTARG" >&2; exit 1;;
@@ -76,6 +84,9 @@ function createVHost {
   ssh ${SETTINGS["remote-host"]} "/etc/init.d/apache2 reload"
 # TODO. Check if htaccess file exists and use -c if it doesnt
   ssh ${SETTINGS["remote-host"]} "htpasswd -b /var/www/.htpasswd $HTUSER $HTPASSWD"
+
+  echo "htaccess login: $HTUSER"
+  echo "htaccess password: $HTPASSWD"
 }
 
 function createDirectories {
@@ -98,6 +109,9 @@ function detectSiteTypeAndVersion {
   elif [[ -d "${1}/public_html/modules/blockcart" ]]; then
     SETTINGS["site-type"]='prestashop'
     SETTINGS["site-version"]='unknown'
+  elif [[ -f "${1}/public_html/misc/drupal.js" ]]; then
+    SETTINGS["site-type"]='drupal'
+    SETTINGS["site-version"]='7'
   fi
   info "-> Type   : ${SETTINGS["site-type"]}"
   info "-> Version: ${SETTINGS["site-version"]}"
@@ -143,19 +157,19 @@ function checkForExistingSite {
   fi
 
   if [[ $EXISTS == true ]]; then
-    if [[ ${SETTINGS["override-existing"]} == false ]]; then
+    if [[ ${SETTINGS["overwrite-existing"]} == false ]]; then
       warning "Site '${1}' exists"
-      local OVERRIDE=n
-      echo -n "Do you want to override? (y/N): "
-      read OVERRIDE
-      if [[ $OVERRIDE == 'y' ]]; then
-        warning "Overriding existing site (User conirmed)"
+      local OVERWRITE=n
+      echo -n "Do you want to overwrite? (y/N): "
+      read OVERWRITE
+      if [[ $OVERWRITE == 'y' ]]; then
+        warning "Overwriting existing site (User conirmed)"
       else
-        info "Not overriding, exiting"
+        info "Not overwriting, exiting"
         exit
       fi
     else
-      warning "Overriding existing site"
+      warning "Overwriting existing site"
     fi
   fi
 }
@@ -220,8 +234,12 @@ function fixSettings {
 
 function fixPermissions {
   declare -A COMMANDS
-  COMMANDS["set_permissions"]="/bin/chmod -R g+rwX /var/www/$1"
-  COMMANDS["set_group"]="/bin/chgrp -R www-data /var/www/$1"
+  COMMANDS[1]="/bin/chmod -R g+rwX /var/www/$1"
+  COMMANDS[2]="/bin/chgrp -R www-data /var/www/$1"
+  if [[ ${SETTINGS["site-type"]} == drupal ]]; then
+    COMMANDS[3]="/bin/chmod -w /var/www/$1/public_html/sites/default"
+    COMMANDS[4]="/bin/chmod -w /var/www/$1/public_html/sites/default/settings.php"
+  fi
 
   if [[ ${SETTINGS["use-remote-host"]} == true ]]; then
     for COMMAND in "${COMMANDS[@]}"; do
@@ -245,7 +263,15 @@ function cloneDrupalSite {
   SETTINGS["database-username"]=$(expr substr ${2//./_} 1 10)
   SETTINGS["database-name"]=${2//./_}
   SETTINGS["database-password"]=$(pwgen -N1 -s 10)
-  /usr/bin/drush archive-dump -r /var/www/$1/public_html --tar-options=" --exclude=%files" --destination=${SETTINGS["tmp-dir"]}/$1.tgz
+# make this an option too, just a quick way for now
+  STAGEMODULE=n
+  echo -n "Do you want to to use the stage_file_proxy module (https://drupal.org/project/stage_file_proxy)? (y/N): "
+  read STAGEMODULE
+  if [[ $STAGEMODULE == 'y' ]]; then
+    /usr/bin/drush archive-dump -r /var/www/$1/public_html --tar-options=" --exclude=%files" --destination=${SETTINGS["tmp-dir"]}/$1.tgz
+  else
+    /usr/bin/drush archive-dump -r /var/www/$1/public_html --destination=${SETTINGS["tmp-dir"]}/$1.tgz
+  fi
   scp ${SETTINGS["tmp-dir"]}/$1.tgz devel:${SETTINGS["tmp-dir"]}
   runRemoteCommand "drush" "archive-restore --overwrite ${SETTINGS["tmp-dir"]}/$1.tgz --destination=/var/www/$2/public_html --db-url=mysql://${SETTINGS["database-username"]}:${SETTINGS["database-password"]}@localhost/${SETTINGS["database-name"]} --db-su=${SETTINGS["database-admin-username"]} --db-su-pw=${SETTINGS["database-admin-password"]}"
 # Cleanup
@@ -277,8 +303,10 @@ function fixDrupalSettings {
   COMMANDS[1]="-r ${NEW_SITE_PUBLIC} vset site_name \"${NEW_SITENAME}\""
   COMMANDS[2]="-r ${NEW_SITE_PUBLIC} vset file_temporary_path ${NEW_SITE}/tmp/"
   COMMANDS[3]="-r ${NEW_SITE_PUBLIC} vset error_level 2"
-  COMMANDS[4]="-r ${NEW_SITE_PUBLIC} dl stage_file_proxy"
-  COMMANDS[5]="-r ${NEW_SITE_PUBLIC} -y en stage_file_proxy"
+  if [[ $STAGEMODULE == 'y' ]]; then
+    COMMANDS[4]="-r ${NEW_SITE_PUBLIC} dl stage_file_proxy"
+    COMMANDS[5]="-r ${NEW_SITE_PUBLIC} -y en stage_file_proxy"
+  fi
   COMMANDS[6]="-r ${NEW_SITE_PUBLIC} cc all"
 
   if [[ ${SETTINGS["use-remote-host"]} == true ]]; then
@@ -291,10 +319,15 @@ function fixDrupalSettings {
     done
   fi
 
-  # just add stage_file_proxy stuff to settings. A better way? Drush?
-  ssh ${SETTINGS["remote-host"]} "echo \"\\\$conf['stage_file_proxy_origin'] = 'http://$1';\" >> $NEW_SETTINGS_FILE"
-  # adding to hostfile needed because of stage_file_proxy. But only on our servers.
-  ssh ${SETTINGS["remote-host"]} "echo \"$INTIP $1\" >> /etc/hosts"
+  if [[ $STAGEMODULE == 'y' ]]; then
+    # just add stage_file_proxy stuff to settings. A better way? Drush?
+    ssh ${SETTINGS["remote-host"]} "echo \"\\\$conf['stage_file_proxy_origin'] = 'http://$1';\" >> $NEW_SETTINGS_FILE"
+    # adding to hostfile needed because of stage_file_proxy. But only on our servers.
+    ssh ${SETTINGS["remote-host"]} "echo \"$INTIP $1\" >> /etc/hosts"
+  fi
+
+  # add the new sitename to /etc/hosts
+  ssh ${SETTINGS["remote-host"]} "echo \"${SETTINGS["remote-host-ip"]} $NEW_VHOSTNAME=\" >> /etc/hosts"
 }
 
 #function cloneDrupalDb {
@@ -321,13 +354,6 @@ function sendStatusMail {
 # TODO. Add htaccess info
 }
 
-EXISTING_VHOSTNAME=$1
-if [[ ! -z ${SETTINGS["new-domain-name-suffix"]} ]]; then
-  NEW_VHOSTNAME="${1}.${SETTINGS["new-domain-name-suffix"]}"
-else
-  NEW_VHOSTNAME="${1}"
-fi
-
 info "Cloning site"
 checkVhost $EXISTING_VHOSTNAME
 checkForExistingSite "/var/www/${NEW_VHOSTNAME}"
@@ -337,10 +363,6 @@ createDirectories $NEW_VHOSTNAME
 createVHost $NEW_VHOSTNAME
 cloneSite $EXISTING_VHOSTNAME $NEW_VHOSTNAME
 fixSettings $EXISTING_VHOSTNAME $NEW_VHOSTNAME
-fixPermissions $NEW_VHOSTNAME
+ixPermissions $NEW_VHOSTNAME
 sendStatusMail $EXISTING_VHOSTNAME $NEW_VHOSTNAME
-# createDb not needed for drupal
-## createDb $NEW_DATABASENAME
 
-echo "htaccess login: $HTUSER"
-echo "htaccess password: $HTPASSWD"
