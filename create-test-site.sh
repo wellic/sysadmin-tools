@@ -109,10 +109,10 @@ function createVHost {
     HTPASSWD="$(pwgen -N1 -s 6)"
     # TODO. better username?
     HTUSER=$1
-    /usr/bin/ssh ${SETTINGS["remote-host"]} "wget -q --output-document=$VHOSTPATH/$1 ${SETTINGS["vhost-url"]}"
-    /usr/bin/ssh ${SETTINGS["remote-host"]} "perl -pi -e 's/\\[domain\\]/$2/g' $VHOSTPATH/$1"
-    /usr/bin/ssh ${SETTINGS["remote-host"]} "sed -i -e '/ServerAlias/d' $VHOSTPATH/$1"
-    /usr/bin/ssh ${SETTINGS["remote-host"]} "sed -i -e 's/#Include\\ \\/etc\\/apache2\\/limit-bellcom.conf/Include\\ \\/etc\\/apache2\\/limit-bellcom.conf/g' $VHOSTPATH/$1"
+    /usr/bin/ssh ${SETTINGS["remote-host"]} "wget -q --output-document=$VHOSTPATH/$2 ${SETTINGS["vhost-url"]}"
+    /usr/bin/ssh ${SETTINGS["remote-host"]} "perl -pi -e 's/\\[domain\\]/$2/g' $VHOSTPATH/$2"
+    /usr/bin/ssh ${SETTINGS["remote-host"]} "sed -i -e '/ServerAlias/d' $VHOSTPATH/$2"
+    /usr/bin/ssh ${SETTINGS["remote-host"]} "sed -i -e 's/#Include\\ \\/etc\\/apache2\\/limit-bellcom.conf/Include\\ \\/etc\\/apache2\\/limit-bellcom.conf/g' $VHOSTPATH/$2"
     /usr/bin/ssh ${SETTINGS["remote-host"]} "a2ensite $2"
     /usr/bin/ssh ${SETTINGS["remote-host"]} "/etc/init.d/apache2 reload"
     # TODO. Check if htaccess file exists and use -c if it doesnt
@@ -451,7 +451,7 @@ function mainCreateTar {
   checkVhost ${SETTINGS["existing-vhost-name"]}
   detectSiteTypeAndVersion "/var/www/${SETTINGS["existing-vhost-name"]}"
   cloneSite ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
-  createVHost ${SETTINGS["existing-vhost-name"]} $NEW_VHOSTNAME
+  createVHost ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
 }
 
 #
@@ -477,7 +477,7 @@ function mainExtractTar {
   
   # fixPermissions ${SETTINGS["new-vhost-name"]}
 
-  createVHost ${SETTINGS["existing-vhost-name"]} $NEW_VHOSTNAME
+  createVHost ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
 } 
 
 if [[ ${SETTINGS["create-tarball"]} == "n" && ${SETTINGS["from-tarball"]} == "n" ]]; then
