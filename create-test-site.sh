@@ -13,12 +13,11 @@ SETTINGS["overwrite-existing"]="n"
 SETTINGS["new-domain-name-suffix"]="devel.dk"
 SETTINGS["site-type"]="drupal"
 SETTINGS["site-version"]="7"
-SETTINGS["tmp-dir"]="/var/www/00-backup"
+SETTINGS["tmp-dir"]="/var/tmp"
 SETTINGS["vhost-url"]="http://tools.bellcom.dk/vhost.txt"
 SETTINGS["remote-host-ip"]=$(dig +short ${SETTINGS["remote-host"]})
 SETTINGS["create-tarball"]="n"
-SETTINGS["from-tarball"]="y"
-SETTINGS["tarball-rootdir"]=${HOME}"/site_copy/"
+SETTINGS["from-tarball"]="n"
 SETTINGS["script-name"]=$0
 SETTINGS["existing-vhost-name"]=""
 SETTINGS["new-vhost-name"]=""
@@ -110,14 +109,14 @@ function createVHost {
     HTPASSWD="$(pwgen -N1 -s 6)"
     # TODO. better username?
     HTUSER=$1
-    ssh ${SETTINGS["remote-host"]} "wget -q --output-document=$VHOSTPATH/$1 ${SETTINGS["vhost-url"]}"
-    ssh ${SETTINGS["remote-host"]} "perl -pi -e 's/\\[domain\\]/$2/g' $VHOSTPATH/$1"
-    ssh ${SETTINGS["remote-host"]} "sed -i -e '/ServerAlias/d' $VHOSTPATH/$1"
-    ssh ${SETTINGS["remote-host"]} "sed -i -e 's/#Include\\ \\/etc\\/apache2\\/limit-bellcom.conf/Include\\ \\/etc\\/apache2\\/limit-bellcom.conf/g' $VHOSTPATH/$1"
-    ssh ${SETTINGS["remote-host"]} "a2ensite $2"
-    ssh ${SETTINGS["remote-host"]} "/etc/init.d/apache2 reload"
+    /usr/bin/ssh ${SETTINGS["remote-host"]} "wget -q --output-document=$VHOSTPATH/$1 ${SETTINGS["vhost-url"]}"
+    /usr/bin/ssh ${SETTINGS["remote-host"]} "perl -pi -e 's/\\[domain\\]/$2/g' $VHOSTPATH/$1"
+    /usr/bin/ssh ${SETTINGS["remote-host"]} "sed -i -e '/ServerAlias/d' $VHOSTPATH/$1"
+    /usr/bin/ssh ${SETTINGS["remote-host"]} "sed -i -e 's/#Include\\ \\/etc\\/apache2\\/limit-bellcom.conf/Include\\ \\/etc\\/apache2\\/limit-bellcom.conf/g' $VHOSTPATH/$1"
+    /usr/bin/ssh ${SETTINGS["remote-host"]} "a2ensite $2"
+    /usr/bin/ssh ${SETTINGS["remote-host"]} "/etc/init.d/apache2 reload"
     # TODO. Check if htaccess file exists and use -c if it doesnt
-    ssh ${SETTINGS["remote-host"]} "htpasswd -b /var/www/.htpasswd $HTUSER $HTPASSWD"
+    /usr/bin/ssh ${SETTINGS["remote-host"]} "htpasswd -b /var/www/.htpasswd $HTUSER $HTPASSWD"
 
     info "htaccess login: $HTUSER"
     info "htaccess password: $HTPASSWD"
@@ -244,7 +243,7 @@ function runRemoteCommand {
         ;;
   esac
 
-  RESULT=$(ssh ${SETTINGS["remote-host"]} "$COMMAND");
+  RESULT=$(/usr/bin/ssh ${SETTINGS["remote-host"]} "$COMMAND");
   echo $RESULT
 }
 
@@ -259,14 +258,6 @@ function cloneSite {
   fi
   case ${SETTINGS["site-type"]} in
       drupal  ) cloneDrupalSite "${EXISTING_VHOSTNAME}" "${NEW_VHOSTNAME}";;
-  esac
-}
-
-function cloneDb {
-  # TODO: args missing
-  info "Cloning database from $1 to $2 on ${SETTINGS["remote-host"]}"
-  case ${SETTINGS["site-type"]} in
-    drupal  ) cloneDrupalDb;;
   esac
 }
 
@@ -287,7 +278,7 @@ function fixPermissions {
 
   if [[ ${SETTINGS["use-remote-host"]} == "y" ]]; then
     for COMMAND in "${COMMANDS[@]}"; do
-      ssh ${SETTINGS["remote-host"]} "$COMMAND"
+      /usr/bin/ssh ${SETTINGS["remote-host"]} "$COMMAND"
     done
   else
     for COMMAND in "${COMMANDS[@]}"; do
@@ -337,12 +328,13 @@ function fixDrupalSettings {
   info "Fixing Drupal site settings"
 
   # vget is a like search => use grep to filter
-  local EXISTING_SITENAME=$(/usr/bin/drush -r /var/www/${EXISTING_VHOSTNAME}/public_html vget site_name | grep '^site_name:' | cut -d\" -f2)
+  local EXISTING_SITENAME=$(/usr/bin/drush -r /var/www/${NEW_VHOSTNAME}/public_html vget site_name | grep '^site_name:' | cut -d\" -f2)
   local NEW_SITENAME="${EXISTING_SITENAME} TEST"
   local NEW_SITE="/var/www/${NEW_VHOSTNAME}"
   local NEW_SITE_PUBLIC="${NEW_SITE}/public_html"
   local NEW_SETTINGS_FILE="/var/www/${NEW_VHOSTNAME}/public_html/sites/default/settings.php"
-  local INTIP=$(/sbin/ifconfig | egrep -o '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | grep -v "\(^127\|255\)")
+  # TODO: Might pick the wrong IP if there are multiple NICs 
+  local INTIP=$(/sbin/ifconfig | egrep -o '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | grep -v "\(^127\|255\)" | head -1)
 
   declare -A COMMANDS
   # TODO:
@@ -370,16 +362,20 @@ function fixDrupalSettings {
 
   if [[ $STAGEMODULE == 'y' ]]; then
     # just add stage_file_proxy stuff to settings. A better way? Drush?
-    ssh ${SETTINGS["remote-host"]} "echo \"\\\$conf['stage_file_proxy_origin'] = 'http://$1';\" >> $NEW_SETTINGS_FILE"
+    /usr/bin/ssh ${SETTINGS["remote-host"]} "echo \"\\\$conf['stage_file_proxy_origin'] = 'http://$1';\" >> $NEW_SETTINGS_FILE"
     # adding to hostfile needed because of stage_file_proxy. But only on our servers.
-    ssh ${SETTINGS["remote-host"]} "echo \"$INTIP $1\" >> /etc/hosts"
+    /usr/bin/ssh ${SETTINGS["remote-host"]} "echo \"$INTIP $1\" >> /etc/hosts"
   fi
 
   # add the new sitename to /etc/hosts
   if [[ ${SETTINGS["use-remote-host"]} == "y" ]]; then
-    ssh ${SETTINGS["remote-host"]} "echo \"${SETTINGS["remote-host-ip"]} ${SETTINGS["new-vhost-name"]}\" >> /etc/hosts"
+    /usr/bin/ssh ${SETTINGS["remote-host"]} "echo \"${SETTINGS["remote-host-ip"]} ${SETTINGS["new-vhost-name"]}\" >> /etc/hosts"
   else
-    echo ${INTIP} ${SETTINGS["new-vhost-name"]} >> /etc/hosts
+    if [[ $UID -ne 0 ]]; then
+      echo ${INTIP} ${SETTINGS["new-vhost-name"]} | sudo tee -a /etc/hosts
+    else
+      echo ${INTIP} ${SETTINGS["new-vhost-name"]} >> /etc/hosts
+    fi
   fi
 }
 
@@ -414,19 +410,12 @@ function drupalDrushArchiveRestore {
   fi
 }
 
-#function cloneDrupalDb {
-#  info "-> Cloning Drupal database"
-#  warning "Not complete"
-#  # NOTE sql-sync can create db before import!!
-#  drush -vvv -r "/var/www/${EXISTING_VHOSTNAME}/public_html" sql-sync --no-cache --no-dump --source-db-url=mysql://root:my5QLpw@127.0.0.1/mi_dk --target-db-url=mysql://root:my5QLpw@localdev2/mi_dk
-#}
-
 function sendStatusMail {
   info "-> Sending status mail"
   USER="$(whoami)@bellcom.dk"
   CC="mmh@bellcom.dk"
   HOSTNAME=$(hostname)
-  success "$2 created on ${SETTINGS["remote-host"]} from $1 by $USER" | mail -s "Testsite created on $HOSTNAME" -c $CC $USER
+  echo "$2 created on ${SETTINGS["remote-host"]} from $1 by $USER" | mail -s "Testsite created on $HOSTNAME" -c $CC $USER
   # TODO. Add htaccess info
 }
 
@@ -437,12 +426,12 @@ function mainRemoteClone {
   info "Cloning site to remote"
 
   checkVhost ${SETTINGS["existing-vhost-name"]}
-  checkForExistingSite "/var/www/${NEW_VHOSTNAME}"
+  checkForExistingSite "/var/www/${SETTINGS["new-vhost-name"]}"
   detectSiteTypeAndVersion "/var/www/${SETTINGS["existing-vhost-name"]}"
 
   createDirectories ${SETTINGS["new-vhost-name"]}
-  createVHost ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
   cloneSite ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
+  createVHost ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
   fixSettings ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
   fixPermissions ${SETTINGS["new-vhost-name"]}
   sendStatusMail ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
@@ -461,8 +450,8 @@ function mainCreateTar {
 
   checkVhost ${SETTINGS["existing-vhost-name"]}
   detectSiteTypeAndVersion "/var/www/${SETTINGS["existing-vhost-name"]}"
-  createVHost ${SETTINGS["existing-vhost-name"]} $NEW_VHOSTNAME
   cloneSite ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
+  createVHost ${SETTINGS["existing-vhost-name"]} $NEW_VHOSTNAME
 }
 
 #
@@ -476,7 +465,7 @@ function mainExtractTar {
 
   generateNewDatabaseSettings ${SETTINGS["new-vhost-name"]}
 
-  local ARCHIVE=${SETTINGS["tmp-dir"]}/${SETTINGS["existing-vhost-name"]}.tgz
+  local ARCHIVE=${SETTINGS["existing-vhost-name"]}.tgz
   local DESTINATION="/var/www/${SETTINGS["new-vhost-name"]}/public_html"
 
   drupalDrushArchiveRestore $ARCHIVE $DESTINATION
@@ -484,8 +473,11 @@ function mainExtractTar {
   fixSettings ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
 
   rm $(basename ${TAR_BALL_LOCATION})
-  ssh ${TAR_BALL_HOST} "rm ${TAR_BALL_LOCATION}"
-  fixPermissions ${SETTINGS["new-vhost-name"]}
+  /usr/bin/ssh ${TAR_BALL_HOST} "rm ${TAR_BALL_LOCATION}"
+  
+  # fixPermissions ${SETTINGS["new-vhost-name"]}
+
+  createVHost ${SETTINGS["existing-vhost-name"]} $NEW_VHOSTNAME
 } 
 
 if [[ ${SETTINGS["create-tarball"]} == "n" && ${SETTINGS["from-tarball"]} == "n" ]]; then
