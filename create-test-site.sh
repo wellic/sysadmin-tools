@@ -15,35 +15,35 @@ SETTINGS["site-type"]="drupal"
 SETTINGS["site-version"]="7"
 SETTINGS["tmp-dir"]="/var/www/00-backup"
 SETTINGS["vhost-url"]="http://tools.bellcom.dk/vhost.txt"
-SETTINGS["database-admin-username"]="root"
 SETTINGS["remote-host-ip"]=$(dig +short ${SETTINGS["remote-host"]})
 SETTINGS["create-tarball"]="n"
 SETTINGS["from-tarball"]="y"
 SETTINGS["tarball-rootdir"]=${HOME}"/site_copy/"
+SETTINGS["script-name"]=$0
+SETTINGS["existing-vhost-name"]=""
+SETTINGS["new-vhost-name"]=""
 # FIXME:
 # TODO. Find a better way to get sensitive information
-# SETTINGS["database-admin-password"]=$(cat /root/.mysql_password)
-
-# A ":" after a flag indicates it will have an option passed with it.
-OPTIONS='ohqtr:d:'
+SETTINGS["database-admin-username"]="root"
+SETTINGS["database-admin-password"]=$MYSQL_ADMIN_PASSWORD
 
 function info {
   if [[ ${SETTINGS["quiet"]} == "n" ]]; then
-    echo $1
+    echo $@
   fi
 }
 
 function warning {
-  echo -e "\e[01;33m${1}\e[00m"
+  echo -e "\e[01;33m${@}\e[00m"
 }
 
 function error {
-  echo -e "\e[00;31m${1}\e[00m"
+  echo -e "\e[00;31m${@}\e[00m"
 }
 
 function success {
   if [[ ${SETTINGS["quiet"]} == "n" ]]; then
-    echo -e "\e[00;32m${1}\e[00m"
+    echo -e "\e[00;32m${@}\e[00m"
   fi
 }
 
@@ -59,6 +59,9 @@ $0 [OPTION] vhost dest
 -f          install from tarball
 EOF
 }
+
+# A ":" after a flag indicates it will have an option passed with it.
+OPTIONS='ohqtfr:d:'
 
 while getopts $OPTIONS OPTION
 do
@@ -84,11 +87,17 @@ if [[ -z ${1} ]]; then
   exit
 fi
 
-EXISTING_VHOSTNAME=$1
+SETTINGS["existing-vhost-name"]=$1
+
 if [[ ! -z ${SETTINGS["new-domain-name-suffix"]} ]]; then
-  NEW_VHOSTNAME="${1}.${SETTINGS["new-domain-name-suffix"]}"
+  SETTINGS["new-vhost-name"]="${1}.${SETTINGS["new-domain-name-suffix"]}"
 else
-  NEW_VHOSTNAME="${1}"
+  SETTINGS["new-vhost-name"]="${1}"
+fi
+
+if [[ ${SETTINGS["from-tarball"]} == "y" ]]; then
+  TAR_BALL_HOST=$3
+  TAR_BALL_LOCATION=$4
 fi
 
 function createVHost {
@@ -173,24 +182,26 @@ function checkForExistingDb {
 }
 
 function checkForExistingSite {
+  local PATH=$1 
+
   info "Checking for existing site"
   local EXISTS="n"
   if [[ ${SETTINGS["use-remote-host"]} == "y" ]]; then
     local RESULT='';
-    RESULT=$(runRemoteCommand "check-existing-site" "$1");
+    RESULT=$(runRemoteCommand "check-existing-site" "${PATH}");
     #echo "RESULT |${RESULT}|"
     if [[ $RESULT == 'y' ]]; then
       EXISTS="y"
     fi
   else
-    if [[ -d $1 ]]; then
+    if [[ -d ${PATH} ]]; then
       EXISTS="y"
     fi
   fi
 
   if [[ $EXISTS == "y" ]]; then
     if [[ ${SETTINGS["overwrite-existing"]} == "n" ]]; then
-      warning "Site '${1}' exists"
+      warning "Site '${PATH}' exists"
       local OVERWRITE=n
       echo -n "Do you want to overwrite? (y/N): "
       read OVERWRITE
@@ -207,23 +218,12 @@ function checkForExistingSite {
 }
 
 function checkVhost {
-  info "Checking virtual host '${1}'"
-  if [[ ! -e "/etc/apache2/sites-enabled/${1}" ]]; then
-    error "Virtual host '/etc/apache2/sites-enabled/${1}' not found"
+  local VHOST=$1
+  info "Checking virtual host '${VHOST}'"
+  if [[ ! -e "/etc/apache2/sites-enabled/${VHOST}" ]]; then
+    error "Virtual host '/etc/apache2/sites-enabled/${VHOST}' not found"
     exit;
   fi
-}
-
-function confirmSettings {
-  if [[ ${SETTINGS["create-tarball"]} == ${SETTINGS["use-remote-host"]} ]]; then
-    error "You can't use remote host with tarball option"
-    exit;
-  fi
-  
-# TODO: 
-  local RESPONSE
-  info "Please confirm settings:"
-  info "..."
 }
 
 function runRemoteCommand {
@@ -249,9 +249,16 @@ function runRemoteCommand {
 }
 
 function cloneSite {
-  info "Cloning site from $1 to $2 on ${SETTINGS["remote-host"]}"
+  local EXISTING_VHOSTNAME=$1 
+  local NEW_VHOSTNAME=$2
+
+  if [[ ${SETTINGS["create-tarball"]} == "y" ]]; then
+    info "Cloning site ${EXISTING_VHOSTNAME} to tarball"
+  else
+    info "Cloning site from ${EXISTING_VHOSTNAME} to ${NEW_VHOSTNAME} on ${SETTINGS["remote-host"]}"
+  fi
   case ${SETTINGS["site-type"]} in
-      drupal  ) cloneDrupalSite "$1" "$2";;
+      drupal  ) cloneDrupalSite "${EXISTING_VHOSTNAME}" "${NEW_VHOSTNAME}";;
   esac
 }
 
@@ -291,55 +298,57 @@ function fixPermissions {
 
 function cloneDrupalSite {
   info "-> Cloning Drupal site"
-  local DEST=$2;
+  local EXISTING_VHOSTNAME=$1 
+  local NEW_VHOSTNAME=$2
+  local DEST=$NEW_VHOSTNAME;
 
   if [[ ${SETTINGS["use-remote-host"]} == "y" ]]; then
-    DEST=${SETTINGS["remote-host"]}:${2}
+    DEST=${SETTINGS["remote-host"]}:${NEW_VHOSTNAME}
   fi
   
-  # create a database user of maxlength 10 and replace . with _
-  # TODO: Also replace other chars like "-"?
-  SETTINGS["database-username"]=$(expr substr ${2//./_} 1 10)
-  SETTINGS["database-name"]=${2//./_}
-  SETTINGS["database-password"]=$(pwgen -N1 -s 10)
-  
-  drupalDrushArchiveDump $1
+  generateNewDatabaseSettings $NEW_VHOSTNAME
+  drupalDrushArchiveDump $EXISTING_VHOSTNAME
 
   if [[ ${SETTINGS["use-remote-host"]} == "y" ]]; then
-    scp ${SETTINGS["tmp-dir"]}/$1.tgz devel:${SETTINGS["tmp-dir"]}
-    runRemoteCommand "drush" "archive-restore --overwrite ${SETTINGS["tmp-dir"]}/$1.tgz --destination=/var/www/$2/public_html --db-url=mysql://${SETTINGS["database-username"]}:${SETTINGS["database-password"]}@localhost/${SETTINGS["database-name"]} --db-su=${SETTINGS["database-admin-username"]} --db-su-pw=${SETTINGS["database-admin-password"]}"
+    # TODO: remove hardcoded hostname
+    scp ${SETTINGS["tmp-dir"]}/${EXISTING_VHOSTNAME}.tgz devel:${SETTINGS["tmp-dir"]}
+
+    local ARCHIVE=${SETTINGS["tmp-dir"]}/${EXISTING_VHOSTNAME}.tgz
+    local DESTINATION="/var/www/${NEW_VHOSTNAME}/public_html"
+    drupalDrushArchiveRestore $ARCHIVE $DESTINATION
   
     # Cleanup
-    rm -f ${SETTINGS["tmp-dir"]}/$1.tgz
+    rm -f $ARCHIVE
   elif [[ ${SETTINGS["create-tarball"]} == "y" ]]; then
-    success "Tarball is in ${SETTINGS["tmp-dir"]}/$1.tgz"
+    success "Tarball is in ${SETTINGS["tmp-dir"]}/${EXISTING_VHOSTNAME}.tgz"
+    success "Now run the following command on the host where you want the site to run:"
+    info "Remember to export MYSQL_ADMIN_PASSWORD with the password to your local MySQL root user"
+    info ${SETTINGS["script-name"]} "-f ${EXISTING_VHOSTNAME} ${NEW_VHOSTNAME} $HOSTNAME" ${SETTINGS["tmp-dir"]}/${EXISTING_VHOSTNAME}.tgz
+    exit
   else
     warning "cloneDrupalSite: Doesn't know what to do"
   fi
 }
 
 function fixDrupalSettings {
+  local EXISTING_VHOSTNAME=$1 
+  local NEW_VHOSTNAME=$2
+
   info "Fixing Drupal site settings"
 
   # vget is a like search => use grep to filter
-  local EXISTING_SITENAME=$(/usr/bin/drush -r /var/www/${1}/public_html vget site_name | grep '^site_name:' | cut -d\" -f2)
+  local EXISTING_SITENAME=$(/usr/bin/drush -r /var/www/${EXISTING_VHOSTNAME}/public_html vget site_name | grep '^site_name:' | cut -d\" -f2)
   local NEW_SITENAME="${EXISTING_SITENAME} TEST"
-  local NEW_SITE="/var/www/${2}"
+  local NEW_SITE="/var/www/${NEW_VHOSTNAME}"
   local NEW_SITE_PUBLIC="${NEW_SITE}/public_html"
-  local NEW_SETTINGS_FILE="/var/www/${2}/public_html/sites/default/settings.php"
+  local NEW_SETTINGS_FILE="/var/www/${NEW_VHOSTNAME}/public_html/sites/default/settings.php"
   local INTIP=$(/sbin/ifconfig | egrep -o '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | grep -v "\(^127\|255\)")
 
   declare -A COMMANDS
-  # TODO
+  # TODO:
   # add -y?
   # add --quiet?
   # file_directory_temp i 6?
-#  COMMANDS["site_name"]="-r ${NEW_SITE_PUBLIC} vset site_name \'${NEW_SITENAME}\'"
-#  COMMANDS["file_temporary_path"]="-r ${NEW_SITE_PUBLIC} vset file_temporary_path /var/www/${NEW_SITE}/tmp/"
-#  COMMANDS["error_level"]="-r ${NEW_SITE_PUBLIC} vset error_level 2"
-#  COMMANDS["download_stage_file_proxy"]="-r ${NEW_SITE_PUBLIC} dl stage_file_proxy"
-#  COMMANDS["enable_stage_file_proxy"]="-r ${NEW_SITE_PUBLIC} -y en stage_file_proxy"
-# baah. associative array order seems to be kinda random...
   COMMANDS[1]="-r ${NEW_SITE_PUBLIC} vset site_name \"${NEW_SITENAME}\""
   COMMANDS[2]="-r ${NEW_SITE_PUBLIC} vset file_temporary_path ${NEW_SITE}/tmp/"
   COMMANDS[3]="-r ${NEW_SITE_PUBLIC} vset error_level 2"
@@ -367,7 +376,19 @@ function fixDrupalSettings {
   fi
 
   # add the new sitename to /etc/hosts
-  ssh ${SETTINGS["remote-host"]} "echo \"${SETTINGS["remote-host-ip"]} $NEW_VHOSTNAME=\" >> /etc/hosts"
+  if [[ ${SETTINGS["use-remote-host"]} == "y" ]]; then
+    ssh ${SETTINGS["remote-host"]} "echo \"${SETTINGS["remote-host-ip"]} ${SETTINGS["new-vhost-name"]}\" >> /etc/hosts"
+  else
+    echo ${INTIP} ${SETTINGS["new-vhost-name"]} >> /etc/hosts
+  fi
+}
+
+function generateNewDatabaseSettings {
+  # create a database user of maxlength 10 and replace . with _
+  # TODO: Also replace other chars like "-"?
+  SETTINGS["database-username"]=$(expr substr ${1//./_} 1 10)
+  SETTINGS["database-name"]=${1//./_}
+  SETTINGS["database-password"]=$(pwgen -N1 -s 10)
 }
 
 function drupalDrushArchiveDump {
@@ -379,6 +400,17 @@ function drupalDrushArchiveDump {
     /usr/bin/drush archive-dump -r /var/www/$1/public_html --tar-options=" --exclude=%files" --destination=${SETTINGS["tmp-dir"]}/$1.tgz
   else
     /usr/bin/drush archive-dump -r /var/www/$1/public_html --destination=${SETTINGS["tmp-dir"]}/$1.tgz
+  fi
+}
+
+function drupalDrushArchiveRestore {
+  local ARCHIVE=$1
+  local DESTINATION=$2
+
+  if [[ ${SETTINGS["use-remote-host"]} == "y" ]]; then
+    runRemoteCommand "drush" "archive-restore --overwrite ${ARCHIVE} --destination=${DESTINATION} --db-url=mysql://${SETTINGS["database-username"]}:${SETTINGS["database-password"]}@localhost/${SETTINGS["database-name"]} --db-su=${SETTINGS["database-admin-username"]} --db-su-pw=${SETTINGS["database-admin-password"]}"
+  else
+    /usr/bin/drush archive-restore --overwrite ${ARCHIVE} --destination=${DESTINATION} --db-url=mysql://${SETTINGS["database-username"]}:${SETTINGS["database-password"]}@localhost/${SETTINGS["database-name"]} --db-su=${SETTINGS["database-admin-username"]} --db-su-pw=${SETTINGS["database-admin-password"]}
   fi
 }
 
@@ -398,24 +430,72 @@ function sendStatusMail {
   # TODO. Add htaccess info
 }
 
-info "Cloning site"
-checkVhost $EXISTING_VHOSTNAME
+#
+# Creates a copy of the site on a remote hosts
+#
+function mainRemoteClone {
+  info "Cloning site to remote"
 
-if [[ ${SETTINGS["create-tarball"]} == "n" ]]; then
+  checkVhost ${SETTINGS["existing-vhost-name"]}
   checkForExistingSite "/var/www/${NEW_VHOSTNAME}"
+  detectSiteTypeAndVersion "/var/www/${SETTINGS["existing-vhost-name"]}"
+
+  createDirectories ${SETTINGS["new-vhost-name"]}
+  createVHost ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
+  cloneSite ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
+  fixSettings ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
+  fixPermissions ${SETTINGS["new-vhost-name"]}
+  sendStatusMail ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
+}
+
+#
+# Creates a tar ball which can be downloaded and used to create a copy
+#
+function mainCreateTar {
+  info "Cloning site to tar ball"
+
+  if [[ ${SETTINGS["create-tarball"]} == ${SETTINGS["use-remote-host"]} ]]; then
+    error "You can't use remote host with tarball option"
+    exit;
+  fi
+
+  checkVhost ${SETTINGS["existing-vhost-name"]}
+  detectSiteTypeAndVersion "/var/www/${SETTINGS["existing-vhost-name"]}"
+  createVHost ${SETTINGS["existing-vhost-name"]} $NEW_VHOSTNAME
+  cloneSite ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
+}
+
+#
+# Downloads a remote tar ball and creates a site based on it
+#
+function mainExtractTar {
+  info "Fetching and extracting tar ball"
+  scp ${TAR_BALL_HOST}:${TAR_BALL_LOCATION} .
+
+  createDirectories ${SETTINGS["new-vhost-name"]}
+
+  generateNewDatabaseSettings ${SETTINGS["new-vhost-name"]}
+
+  local ARCHIVE=${SETTINGS["tmp-dir"]}/${SETTINGS["existing-vhost-name"]}.tgz
+  local DESTINATION="/var/www/${SETTINGS["new-vhost-name"]}/public_html"
+
+  drupalDrushArchiveRestore $ARCHIVE $DESTINATION
+
+  fixSettings ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
+
+  rm $(basename ${TAR_BALL_LOCATION})
+  ssh ${TAR_BALL_HOST} "rm ${TAR_BALL_LOCATION}"
+  fixPermissions ${SETTINGS["new-vhost-name"]}
+} 
+
+if [[ ${SETTINGS["create-tarball"]} == "n" && ${SETTINGS["from-tarball"]} == "n" ]]; then
+  mainRemoteClone
 fi
 
-detectSiteTypeAndVersion "/var/www/${EXISTING_VHOSTNAME}"
-confirmSettings
-
-if [[ ${SETTINGS["create-tarball"]} == "n" ]]; then
-  createDirectories $NEW_VHOSTNAME
+if [[ ${SETTINGS["create-tarball"]} == "y" ]]; then
+  mainCreateTar
 fi
 
-createVHost $EXISTING_VHOSTNAME $NEW_VHOSTNAME
-
-cloneSite $EXISTING_VHOSTNAME $NEW_VHOSTNAME
-
-# fixSettings $EXISTING_VHOSTNAME $NEW_VHOSTNAME
-# ixPermissions $NEW_VHOSTNAME
-# sendStatusMail $EXISTING_VHOSTNAME $NEW_VHOSTNAME
+if [[ ${SETTINGS["from-tarball"]} == "y" ]]; then
+  mainExtractTar
+fi
