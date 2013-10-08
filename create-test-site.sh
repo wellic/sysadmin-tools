@@ -21,8 +21,6 @@ SETTINGS["from-tarball"]="n"
 SETTINGS["script-name"]=$0
 SETTINGS["existing-vhost-name"]=""
 SETTINGS["new-vhost-name"]=""
-# FIXME:
-# TODO. Find a better way to get sensitive information
 SETTINGS["database-admin-username"]="root"
 SETTINGS["database-admin-password"]=$MYSQL_ADMIN_PASSWORD
 
@@ -155,29 +153,6 @@ function detectSiteTypeAndVersion {
   fi
   info "-> Type   : ${SETTINGS["site-type"]}"
   info "-> Version: ${SETTINGS["site-version"]}"
-}
-
-function createDb {
-  info "Creating database"
-
-  declare -A COMMANDS
-  COMMANDS["create"]="-u ${SETTINGS["database-admin-username"]} --password=${SETTINGS["database-admin-password"]} -e 'CREATE DATABASE ${SETTINGS["database-name"]}'"
-  COMMANDS["grant"]="-u ${SETTINGS["database-admin-username"]} --password=${SETTINGS["database-admin-password"]} -e \"GRANT ALL ON ${SETTINGS["database-name"]}.* TO ${SETTINGS["database-username"]}@localhost IDENTIFIED BY '${SETTINGS["database-password"]}'\"";
-
-  if [[ ${SETTINGS["use-remote-host"]} == "y" ]]; then
-    for COMMAND in "${COMMANDS[@]}"; do
-      runRemoteCommand 'mysql' "$COMMAND"
-    done
-  else
-    for COMMAND in "${COMMANDS[@]}"; do
-       mysql $COMMAND
-    done
-  fi
-}
-
-function checkForExistingDb {
-  info "Checking for existing database"
-  error "-> Not implemented"
 }
 
 function checkForExistingSite {
@@ -458,6 +433,10 @@ function mainCreateTar {
 # Downloads a remote tar ball and creates a site based on it
 #
 function mainExtractTar {
+  if [[ -z ${SETTINGS["database-admin-password"]} ]]; then
+    error "Missing database admin password, please set \$MYSQL_ADMIN_PASSWORD in your environment"
+  fi
+
   info "Fetching and extracting tar ball"
   scp ${TAR_BALL_HOST}:${TAR_BALL_LOCATION} .
 
