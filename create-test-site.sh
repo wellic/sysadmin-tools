@@ -43,16 +43,7 @@ function success {
   fi
 }
 
-# if [[ $UID -ne 0 ]]; then
-#   error "Script must run as root"
-#   exit 1;
-# fi
 
-# TODO: needed when we create db
-# if [[ ! -f ~/.my.cnf ]]; then
-#   error "Missing ~/.my.cnf file, it must exist and contain MySQL password"
-#   exit 1
-# fi
 
 function usage {
 cat <<EOF
@@ -86,11 +77,10 @@ Action specific options:
             --password Password for access
             --name Database name
 
--r VALUE    remote host
--o          overwrite existing site
--d VALUE    append VALUE to vhost name
--t          create tarball with site (can't be used with -r)
--f          install from tarball
+   create-vhost: Creates a new virtual host
+            --user Username for htaccess
+            --password Password for htaccess
+            --vhost Virtual host name
 EOF
 }
 
@@ -138,6 +128,11 @@ case $1 in
   "create-database")
     MAIN_ACTION=$1
     ARGS=$(getopt -l "user:,password:,name:" -- "$@");
+    SETTINGS["use-remote-host"]="n"
+    ;;
+  "create-vhost")
+    MAIN_ACTION=$1
+    ARGS=$(getopt -l "user:,password:,vhost:" -- "$@");
     SETTINGS["use-remote-host"]="n"
     ;;
   "help")
@@ -262,30 +257,31 @@ else
 fi
 
 function createVHost {
-  if [[ ${SETTINGS["use-remote-host"]} == "y" ]]; then
-    info "Creating virtual host ${2}"
-    
-    local VHOSTPATH="/etc/apache2/sites-available"
-    local HTPASSWDFILE="/var/www/.htpasswd"
+  local VHOSTPATH="/etc/apache2/sites-available"
+  local HTPASSWDFILE="/var/www/.htpasswd"
 
-    HTPASSWD="$(pwgen -N1 -s 6)"
+  if [[ ${SETTINGS["use-remote-host"]} == "y" ]]; then
+    info "Creating virtual host ${1}"
+    local HTPASSWD="$(pwgen -N1 -s 6)"
     # TODO. better username?
-    HTUSER=$1
-    /usr/bin/ssh ${SETTINGS["remote-host"]} "wget -q --output-document=$VHOSTPATH/$2 ${SETTINGS["vhost-url"]}"
-    /usr/bin/ssh ${SETTINGS["remote-host"]} "perl -pi -e 's/\\[domain\\]/$2/g' $VHOSTPATH/$2"
-    /usr/bin/ssh ${SETTINGS["remote-host"]} "sed -i -e '/ServerAlias/d' $VHOSTPATH/$2"
-    /usr/bin/ssh ${SETTINGS["remote-host"]} "sed -i -e 's/#Include\\ \\/etc\\/apache2\\/limit-bellcom.conf/Include\\ \\/etc\\/apache2\\/limit-bellcom.conf/g' $VHOSTPATH/$2"
-    /usr/bin/ssh ${SETTINGS["remote-host"]} "a2ensite $2"
-    /usr/bin/ssh ${SETTINGS["remote-host"]} "/etc/init.d/apache2 reload"
-    # TODO. Check if htaccess file exists and use -c if it doesnt
-    /usr/bin/ssh ${SETTINGS["remote-host"]} "htpasswd -b /var/www/.htpasswd $HTUSER $HTPASSWD"
+    local HTUSER=$1
+
+    local RESULT=''
+    RESULT=$(runRemoteCommand "create-vhost" "--user ${HTUSER} --password ${HTPASSWD} --vhost $1")
 
     info "htaccess login: $HTUSER"
     info "htaccess password: $HTPASSWD"
   elif [[ ${SETTINGS["create-tarball"]} == "y" ]]; then
     warning "createVHost: FIXME: copy vhost?"
   else
-    warning "createVHost: Doesn't know what to do"
+    wget -q --output-document=$VHOSTPATH/$1 ${SETTINGS["vhost-url"]}
+    perl -pi -e "s/\[domain\]/${1}/g" $VHOSTPATH/$1
+    sed -i -e '/ServerAlias/d' $VHOSTPATH/$1
+    sed -i -e 's/#Include\ \/etc\/apache2\/limit-bellcom.conf/Include\ \/etc\/apache2\/limit-bellcom.conf/g' $VHOSTPATH/$1
+    a2ensite $1
+    /etc/init.d/apache2 reload
+    # TODO. Check if htaccess file exists and use -c if it doesnt
+    htpasswd -b /var/www/.htpasswd ${SETTINGS["user"]} ${SETTINGS["password"]}
   fi
 }
 
@@ -385,6 +381,11 @@ function createDatabase {
   local PASSWORD=$2
   local DBNAME=$3
 
+  if [[ ! -f ~/.my.cnf ]]; then
+    error "Missing ~/.my.cnf file, it must exist and contain MySQL password"
+    exit 1
+  fi
+
   mysql -u root -e "CREATE DATABASE ${DBNAME}"
   mysql -u root -e "GRANT ALL ON ${DBNAME}.* TO ${USER}@localhost IDENTIFIED BY \"${PASSWORD}\""
   mysql -u root -e "FLUSH PRIVILEGES"
@@ -412,6 +413,10 @@ function runRemoteCommand {
       'create-database'  )
         # FIXME: hardcoded path for testing
         COMMAND="sudo ~hf/create-test-site.sh create-database ${2}"
+        ;;
+      'create-vhost'  )
+        # FIXME: hardcoded path for testing
+        COMMAND="sudo ~hf/create-test-site.sh create-vhost ${2}"
         ;;
       'drush'  )
         COMMAND="/usr/bin/drush ${2}"
@@ -463,8 +468,8 @@ function fixPermissions {
     #for COMMAND in "${COMMANDS[@]}"; do
       #/usr/bin/ssh ${SETTINGS["remote-host"]} "$COMMAND"
     #done
-    local RESULT='';
-    RESULT=$(runRemoteCommand "fix-permissions" "$BASE_DIR");
+    local RESULT=''
+    RESULT=$(runRemoteCommand "fix-permissions" "$BASE_DIR")
   else
     declare -A COMMANDS
     # FIXME: remote chmod... nice
@@ -556,6 +561,8 @@ function fixDrupalSettings {
     done
   fi
 
+  # FIXME:
+  # - Needs to be run with sudo, aka runRemoteCommand
   if [[ $STAGEMODULE == 'y' ]]; then
     # just add stage_file_proxy stuff to settings. A better way? Drush?
     /usr/bin/ssh ${SETTINGS["remote-host"]} "echo \"\\\$conf['stage_file_proxy_origin'] = 'http://$1';\" >> $NEW_SETTINGS_FILE"
@@ -632,7 +639,7 @@ function mainRemoteClone {
   createDirectories ${SETTINGS["new-vhost-name"]}
   fixPermissions ${SETTINGS["new-vhost-name"]}
   cloneSite ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
-  createVHost ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
+  createVHost ${SETTINGS["new-vhost-name"]}
   fixSettings ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
   sendStatusMail ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
 }
@@ -651,7 +658,7 @@ function mainCreateTar {
   checkVhost ${SETTINGS["existing-vhost-name"]}
   detectSiteTypeAndVersion "/var/www/${SETTINGS["existing-vhost-name"]}"
   cloneSite ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
-  createVHost ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
+  createVHost ${SETTINGS["new-vhost-name"]}
 }
 
 #
@@ -681,7 +688,7 @@ function mainExtractTar {
   
   # fixPermissions ${SETTINGS["new-vhost-name"]}
 
-  createVHost ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
+  createVHost ${SETTINGS["new-vhost-name"]}
 } 
 
 #
@@ -713,5 +720,8 @@ case $MAIN_ACTION in
     ;;
   "create-database")
     createDatabase ${SETTINGS["user"]} ${SETTINGS["password"]} ${SETTINGS["name"]}
+    ;;
+  "create-vhost")
+    createVHost ${SETTINGS["existing-vhost-name"]}
     ;;
 esac
