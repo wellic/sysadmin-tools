@@ -18,6 +18,7 @@ SETTINGS["vhost-url"]="http://tools.bellcom.dk/vhost.txt"
 SETTINGS["database-admin-username"]="root"
 SETTINGS["remote-host-ip"]=$(dig +short ${SETTINGS["remote-host"]})
 # TODO. Find a better way to get sensitive information
+# This is the root password for the remote mysql
 SETTINGS["database-admin-password"]=$(cat /root/.mysql_password)
 
 EXISTING_VHOSTNAME=$1
@@ -272,7 +273,7 @@ function cloneDrupalSite {
   else
     /usr/bin/drush archive-dump -r /var/www/$1/public_html --destination=${SETTINGS["tmp-dir"]}/$1.tgz
   fi
-  scp ${SETTINGS["tmp-dir"]}/$1.tgz devel:${SETTINGS["tmp-dir"]}
+  scp ${SETTINGS["tmp-dir"]}/$1.tgz ${SETTINGS["remote-host"]}:${SETTINGS["tmp-dir"]}
   runRemoteCommand "drush" "archive-restore --overwrite ${SETTINGS["tmp-dir"]}/$1.tgz --destination=/var/www/$2/public_html --db-url=mysql://${SETTINGS["database-username"]}:${SETTINGS["database-password"]}@localhost/${SETTINGS["database-name"]} --db-su=${SETTINGS["database-admin-username"]} --db-su-pw=${SETTINGS["database-admin-password"]}"
 # Cleanup
   rm -f ${SETTINGS["tmp-dir"]}/$1.tgz
@@ -363,6 +364,6 @@ createDirectories $NEW_VHOSTNAME
 createVHost $NEW_VHOSTNAME
 cloneSite $EXISTING_VHOSTNAME $NEW_VHOSTNAME
 fixSettings $EXISTING_VHOSTNAME $NEW_VHOSTNAME
-ixPermissions $NEW_VHOSTNAME
+fixPermissions $NEW_VHOSTNAME
 sendStatusMail $EXISTING_VHOSTNAME $NEW_VHOSTNAME
 
