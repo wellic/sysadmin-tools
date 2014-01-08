@@ -7,6 +7,7 @@
 # version 0.6 (11-okt-2011): Support from community 2011.5 to 2011.9
 # version 0.7 (16-jan-2013): Support from community 2011.9 to 2012.8
 
+# Note: skip 2012.5 and go to 2012.6
 # Note: skip 4.2011 and go to 2011.5
 # Note: skip 2011.{5,6,7,8} and go to 2011.9
 # Note: skip from 2011.9 to 2012.2 by setting the to versions to that
@@ -24,8 +25,8 @@ EZ_NEW_ARCHIVE="ezpublish_community_project-${EZ_NEWVERSION}-with_ezc.tar.bz2"
 # pre 4.2:
 # EZ_NEW_ARCHIVE="${EZ_NEW_PATH}-gpl.tar.bz2" 
 
-LOCAL_PATH="local" # local / local_dev
-DOC_ROOT_PATH="public_html" # ez_svn
+LOCAL_PATH="local_dev" # local / local_dev
+DOC_ROOT_PATH="public_html_test" # ez_svn
 DOC_UPGRADE_PATH="public_html_upgrade"
 SITEACCESSES=`ls ${LOCAL_PATH}/settings/siteaccess`
 
@@ -441,15 +442,10 @@ fi
 
 if [[ ${EZ_OLDVERSION} == '2012.4' && ${EZ_NEWVERSION} == '2012.5' ]]; then
  echo "# upgrade fra ${EZ_OLDVERSION} -> ${EZ_NEWVERSION}"
- echo "# Run SQL:"
- echo "SET storage_engine=InnoDB;
-UPDATE ezsite_data SET value='5.0.0alpha1' WHERE name='ezpublish-version';
-UPDATE ezsite_data SET value='1' WHERE name='ezpublish-release';"
- echo "php bin/php/ezpgenerateautoloads.php --extension"
- echo "php bin/php/ezcache.php --clear-all --purge"
+ echo "# Skip this and go to 2012.6"
 fi
 
-if [[ ${EZ_OLDVERSION} == '2012.5' && ${EZ_NEWVERSION} == '2012.6' ]]; then
+if [[ ( ${EZ_OLDVERSION} == '2012.5' && ${EZ_NEWVERSION} == '2012.6' ) || ( ${EZ_OLDVERSION} == '2012.4' && ${EZ_NEWVERSION} == '2012.6' ) ]]; then
  echo "# upgrade fra ${EZ_OLDVERSION} -> ${EZ_NEWVERSION}"
  echo "# Run SQL:"
  echo "SET storage_engine=InnoDB;
