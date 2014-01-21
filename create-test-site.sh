@@ -78,9 +78,9 @@ function createVHost {
 # TODO. better username?
   HTUSER=$1
   ssh ${SETTINGS["remote-host"]} "wget -q --output-document=$VHOSTPATH/$1 ${SETTINGS["vhost-url"]}"
-  ssh ${SETTINGS["remote-host"]} "perl -pi -e 's/\\[domain\\]/$1/g' $VHOSTPATH/$1"
-  ssh ${SETTINGS["remote-host"]} "sed -i -e '/ServerAlias/d' $VHOSTPATH/$1"
-  ssh ${SETTINGS["remote-host"]} "sed -i -e 's/#Include\\ \\/etc\\/apache2\\/limit-bellcom.conf/Include\\ \\/etc\\/apache2\\/limit-bellcom.conf/g' $VHOSTPATH/$1"
+  ssh ${SETTINGS["remote-host"]} "/usr/bin/perl -pi -e 's/\\[domain\\]/$1/g' $VHOSTPATH/$1"
+  ssh ${SETTINGS["remote-host"]} "/bin/sed -i -e '/ServerAlias/d' $VHOSTPATH/$1"
+  ssh ${SETTINGS["remote-host"]} "/bin/sed -i -e 's/#Include\\ \\/etc\\/apache2\\/limit-bellcom.conf/Include\\ \\/etc\\/apache2\\/limit-bellcom.conf/g' $VHOSTPATH/$1"
   ssh ${SETTINGS["remote-host"]} "a2ensite $1"
   ssh ${SETTINGS["remote-host"]} "/etc/init.d/apache2 reload"
 # TODO. Check if htaccess file exists and use -c if it doesnt
@@ -283,7 +283,7 @@ function fixDrupalSettings {
   info "Fixing Drupal site settings"
 
   # vget is a like search => use grep to filter
-  local EXISTING_SITENAME=$(/usr/bin/drush -r /var/www/${1}/public_html vget site_name | grep '^site_name:' | cut -d\" -f2)
+  local EXISTING_SITENAME=$(/usr/bin/drush -r /var/www/${1}/public_html vget site_name | grep '^site_name:' | cut -d\' -f2)
   local NEW_SITENAME="${EXISTING_SITENAME} TEST"
   local NEW_SITE="/var/www/${2}"
   local NEW_SITE_PUBLIC="${NEW_SITE}/public_html"
