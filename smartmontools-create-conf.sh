@@ -5,7 +5,7 @@
 # TODO: should we use -M exec /usr/share/smartmontools/smartd-runner to run the scripts in /etc/smartmontools/run.d
 
 # -W Monitor temperature
-CONF_OPTIONS="-W"
+CONF_OPTIONS="-W 4,45,50"
 # Short everyday at 2, Long saturdays at 3
 CONF_SCHEDULE="-s (S/../.././02|L/../../6/03)"
 CONF_EMAIL="-m sysadmin+disk@bellcom.dk"
