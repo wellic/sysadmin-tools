@@ -4,6 +4,7 @@
 # 
 # TODO: should we use -M exec /usr/share/smartmontools/smartd-runner to run the scripts in /etc/smartmontools/run.d
 
+CONF_FILE="/etc/smartd.conf"
 # -W Monitor temperature
 CONF_OPTIONS="-W 4,45,50"
 # Short everyday at 2, Long saturdays at 3
@@ -26,10 +27,11 @@ if [[ -n $HW_RAID ]]; then
   case $HW_RAID_TYPE in
     adaptec )
       # sg0 is the controller
+      rm $CONF_FILE
       for DEVICE in /dev/sg[1-9]; do
-        IGNORE=`sg_scan -i $DEVICE | grep -ic "\(virtual\)"`
+        IGNORE=`sg_scan -i $DEVICE | grep -ic "\(virtual\|DVD\|Data\)"`
         if [[ $IGNORE == 0 ]]; then
-          echo $DEVICE $CONF_OPTIONS $CONF_SCHEDULE $CONF_EMAIL
+          echo $DEVICE $CONF_OPTIONS $CONF_SCHEDULE $CONF_EMAIL >> $CONF_FILE
         fi
       done
       ;;
@@ -39,7 +41,8 @@ fi
 shopt -s extglob
 
 if [[ -n $SW_RAID ]]; then
+  rm $CONF_FILE
   for DEVICE in /dev/disk/by-id/ata!(*part*); do
-    echo $DEVICE $CONF_OPTIONS $CONF_SCHEDULE $CONF_EMAIL
+    echo $DEVICE $CONF_OPTIONS $CONF_SCHEDULE $CONF_EMAIL >> $CONF_FILE
   done
 fi
