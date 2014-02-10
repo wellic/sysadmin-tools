@@ -38,9 +38,10 @@ HW_RAID=`lspci | grep -i raid`
 SW_RAID=`ls /proc/mdstat 2>/dev/null`
 
 # Identify CD/DVD drive
+SKIP_DEVICES="cdrom"
 if [[ -f /proc/sys/dev/cdrom/info ]]; then
   DEVICE_NAME=`grep 'drive name' /proc/sys/dev/cdrom/info | cut -f3`
-  SKIP_DEVICES="$SKIP_DEVICES $DEVICE_NAME"
+  SKIP_DEVICES="$SKIP_DEVICES|$DEVICE_NAME"
   debug "Adding " $DEVICE_NAME " to SKIP_DEVICES"
 fi
 
@@ -68,7 +69,7 @@ shopt -s extglob
 if [[ -n $SW_RAID ]]; then
   for DEVICE in /dev/disk/by-id/ata!(*part*); do
     DEVICE_FILE=`readlink -f $DEVICE`
-    if [[ `echo $DEVICE_FILE | grep -c $SKIP_DEVICES` == 0 ]]; then
+    if [[ `echo $DEVICE_FILE | egrep -c "$SKIP_DEVICES"` == 0 ]]; then
       echo $DEVICE $CONF_OPTIONS $CONF_SCHEDULE $CONF_EMAIL
     else
       debug "Ignored $DEVICE_FILE"
