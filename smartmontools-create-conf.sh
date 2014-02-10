@@ -54,7 +54,7 @@ if [[ -n $HW_RAID ]]; then
     adaptec )
       # sg0 is the controller
       for DEVICE in /dev/sg[1-9]; do
-        IGNORE=`sg_scan -i $DEVICE | grep -ic "\(virtual\|DVD\|Data\)"`
+        IGNORE=`sg_scan -i $DEVICE | grep -c "\(Virtual\|DVD\|Adaptec\|TEAC\|ATAPI\)"`
         if [[ $IGNORE == 0 ]]; then
           echo $DEVICE $CONF_OPTIONS $CONF_SCHEDULE $CONF_EMAIL
         fi
