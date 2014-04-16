@@ -275,9 +275,9 @@ function createVHost {
     warning "createVHost: FIXME: copy vhost?"
   else
     wget -q --output-document=$VHOSTPATH/$1 ${SETTINGS["vhost-url"]}
-    perl -pi -e "s/\[domain\]/${1}/g" $VHOSTPATH/$1
-    sed -i -e '/ServerAlias/d' $VHOSTPATH/$1
-    sed -i -e 's/#Include\ \/etc\/apache2\/limit-bellcom.conf/Include\ \/etc\/apache2\/limit-bellcom.conf/g' $VHOSTPATH/$1
+    /usr/bin/perl -pi -e "s/\[domain\]/${1}/g" $VHOSTPATH/$1
+    /bin/sed -i -e '/ServerAlias/d' $VHOSTPATH/$1
+    /bin/sed -i -e 's/#Include\ \/etc\/apache2\/limit-bellcom.conf/Include\ \/etc\/apache2\/limit-bellcom.conf/g' $VHOSTPATH/$1
     a2ensite $1
     /etc/init.d/apache2 reload
     # TODO. Check if htaccess file exists and use -c if it doesnt
@@ -500,8 +500,7 @@ function cloneDrupalSite {
   drupalDrushArchiveDump $EXISTING_VHOSTNAME
 
   if [[ ${SETTINGS["use-remote-host"]} == "y" ]]; then
-    # FIXME: remove hardcoded hostname
-    scp ${SETTINGS["tmp-dir"]}/${EXISTING_VHOSTNAME}.tgz devel:${SETTINGS["tmp-dir"]}
+    scp ${SETTINGS["tmp-dir"]}/${EXISTING_VHOSTNAME}.tgz ${SETTINGS["remote-host"]}:${SETTINGS["tmp-dir"]}
 
     local ARCHIVE=${SETTINGS["tmp-dir"]}/${EXISTING_VHOSTNAME}.tgz
     local DESTINATION="/var/www/${NEW_VHOSTNAME}/public_html"
@@ -529,7 +528,7 @@ function fixDrupalSettings {
   info "Fixing Drupal site settings"
 
   # vget is a like search => use grep to filter
-  local EXISTING_SITENAME=$(/usr/bin/drush -r /var/www/${NEW_VHOSTNAME}/public_html vget site_name | grep '^site_name:' | cut -d\" -f2)
+  local EXISTING_SITENAME=$(/usr/bin/drush -r /var/www/${NEW_VHOSTNAME}/public_html vget site_name | grep '^site_name:' | cut -d\' -f2)
   local NEW_SITENAME="${EXISTING_SITENAME} TEST"
   local NEW_SITE="/var/www/${NEW_VHOSTNAME}"
   local NEW_SITE_PUBLIC="${NEW_SITE}/public_html"
