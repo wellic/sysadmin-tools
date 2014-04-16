@@ -1,4 +1,6 @@
 #!/bin/bash
+set -o nounset
+set -o errexit
 
 # TODO
 # Fix cloning sites with subdomains, xxx.bellcom.dk. Seems to fail now
@@ -22,6 +24,8 @@ SETTINGS["script-name"]=$0
 SETTINGS["existing-vhost-name"]=""
 SETTINGS["new-vhost-name"]=""
 SETTINGS["database-admin-username"]="root"
+# FIXME: hardcoded path for testing
+SETTINGS["remote-script-location"]="~hf/create-test-site.sh"
 
 function info {
   if [[ ${SETTINGS["quiet"]} == "n" ]]; then
@@ -41,6 +45,10 @@ function success {
   if [[ ${SETTINGS["quiet"]} == "n" ]]; then
     echo -e "\e[00;32m${@}\e[00m"
   fi
+}
+
+function log {
+echo "[$(date) $(hostname)]: "$@ >> /tmp/create-test-site.log
 }
 
 
@@ -280,7 +288,7 @@ function createVHost {
     /bin/sed -i -e 's/#Include\ \/etc\/apache2\/limit-bellcom.conf/Include\ \/etc\/apache2\/limit-bellcom.conf/g' $VHOSTPATH/$1
     a2ensite $1
     /etc/init.d/apache2 reload
-    # TODO. Check if htaccess file exists and use -c if it doesnt
+    # TODO: Check if htaccess file exists and use -c if it doesnt
     htpasswd -b /var/www/.htpasswd ${SETTINGS["user"]} ${SETTINGS["password"]}
   fi
 }
@@ -288,7 +296,7 @@ function createVHost {
 function createDirectories {
   # If location option is set, use that path instead of building one based on hostname + subdirs
   # Is used when calling remotely
-  if [[ -n ${SETTINGS["location"]} ]]; then
+  if [[ ${SETTINGS["location"]:-X} != X ]]; then
     local DIRS=${SETTINGS["location"]}
   else
     # TODO:
@@ -301,16 +309,21 @@ function createDirectories {
     local RESULT=''
     RESULT=$(runRemoteCommand "create-dirs" $DIRS)
   else
-    info "Creating directories ($HOST)"
+    info "Creating directories ($(hostname))"
 
     # FIXME: when run remotely it is a bit dangurous
-    # TODO: Do we need eval to expand variable?
     if [[ $UID -ne 0 ]]; then
-      #eval "sudo mkdir -p ${DIRS}"
       sudo mkdir -p ${DIRS}
+      sudo mkdir ${DIRS}/public_html
+      sudo mkdir ${DIRS}/tmp
+      sudo mkdir ${DIRS}/logs
+      sudo mkdir ${DIRS}/sessions
     else
-      #eval "mkdir -p ${DIRS}"
       mkdir -p ${DIRS}
+      mkdir ${DIRS}/public_html
+      mkdir ${DIRS}/tmp
+      mkdir ${DIRS}/logs
+      mkdir ${DIRS}/sessions
     fi
   fi
 }
@@ -399,24 +412,19 @@ function runRemoteCommand {
         COMMAND="if [[ -d ${2} ]]; then echo y; else echo n; fi"
         ;;
       'create-dirs'  )
-        # FIXME: hardcoded path for testing
-        COMMAND="sudo ~hf/create-test-site.sh create-dirs --location ${2}"
+        COMMAND="sudo ${SETTINGS['remote-script-location']} create-dirs --location ${2}"
         ;;
       'fix-permissions'  )
-        # FIXME: hardcoded path for testing
-        COMMAND="sudo ~hf/create-test-site.sh fix-permissions --location ${2}"
+        COMMAND="sudo ${SETTINGS['remote-script-location']} fix-permissions --location ${2}"
         ;;
       'drush-archive-restore'  )
-        # FIXME: hardcoded path for testing
-        COMMAND="sudo ~hf/create-test-site.sh drush-archive-restore ${2}"
+        COMMAND="sudo ${SETTINGS['remote-script-location']} drush-archive-restore ${2}"
         ;;
       'create-database'  )
-        # FIXME: hardcoded path for testing
-        COMMAND="sudo ~hf/create-test-site.sh create-database ${2}"
+        COMMAND="sudo ${SETTINGS['remote-script-location']} create-database ${2}"
         ;;
       'create-vhost'  )
-        # FIXME: hardcoded path for testing
-        COMMAND="sudo ~hf/create-test-site.sh create-vhost ${2}"
+        COMMAND="sudo ${SETTINGS['remote-script-location']} create-vhost ${2}"
         ;;
       'drush'  )
         COMMAND="/usr/bin/drush ${2}"
@@ -457,7 +465,7 @@ function fixSettings {
 function fixPermissions {
   # If location option is set, use that path instead of building one based on hostname + subdirs
   # Is used when calling remotely
-  if [[ -n ${SETTINGS["location"]} ]]; then
+  if [[ ${SETTINGS["location"]:-X} != X ]]; then
     local BASE_DIR=${SETTINGS["location"]}
   else
     #local BASE_DIR="/var/www/${1}/public_html"
@@ -500,6 +508,12 @@ function cloneDrupalSite {
   drupalDrushArchiveDump $EXISTING_VHOSTNAME
 
   if [[ ${SETTINGS["use-remote-host"]} == "y" ]]; then
+
+    if [[ ! -f ${SETTINGS["tmp-dir"]}/${EXISTING_VHOSTNAME}.tgz ]]; then
+      error "Dump file not created"
+      exit
+    fi
+
     scp ${SETTINGS["tmp-dir"]}/${EXISTING_VHOSTNAME}.tgz ${SETTINGS["remote-host"]}:${SETTINGS["tmp-dir"]}
 
     local ARCHIVE=${SETTINGS["tmp-dir"]}/${EXISTING_VHOSTNAME}.tgz
@@ -528,7 +542,8 @@ function fixDrupalSettings {
   info "Fixing Drupal site settings"
 
   # vget is a like search => use grep to filter
-  local EXISTING_SITENAME=$(/usr/bin/drush -r /var/www/${NEW_VHOSTNAME}/public_html vget site_name | grep '^site_name:' | cut -d\' -f2)
+  log "/usr/bin/drush -r /var/www/${EXISTING_VHOSTNAME}/public_html vget site_name | grep '^site_name:' | cut -d\' -f2"
+  local EXISTING_SITENAME=$(/usr/bin/drush -r /var/www/${EXISTING_VHOSTNAME}/public_html vget site_name | grep '^site_name:' | cut -d\' -f2)
   local NEW_SITENAME="${EXISTING_SITENAME} TEST"
   local NEW_SITE="/var/www/${NEW_VHOSTNAME}"
   local NEW_SITE_PUBLIC="${NEW_SITE}/public_html"
@@ -601,7 +616,7 @@ function drupalDrushArchiveRestore {
   local ARCHIVE=$1
   local DESTINATION=$2
 
-  if [[ -n $3 ]]; then
+  if [[ ${3:-X} != X ]]; then
     local DB_URL=$3
   else
     local DB_URL="mysql://${SETTINGS["database-username"]}:${SETTINGS["database-password"]}@localhost/${SETTINGS["database-name"]}"
@@ -639,7 +654,8 @@ function mainRemoteClone {
   fixPermissions ${SETTINGS["new-vhost-name"]}
   cloneSite ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
   createVHost ${SETTINGS["new-vhost-name"]}
-  fixSettings ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
+  fixPermissions ${SETTINGS["new-vhost-name"]}
+  fixDrupalSettings ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
   sendStatusMail ${SETTINGS["existing-vhost-name"]} ${SETTINGS["new-vhost-name"]}
 }
 
@@ -693,7 +709,7 @@ function mainExtractTar {
 #
 # Run functions
 #
-echo `date` ": ${MAIN_ACTION}" >> /tmp/create-test-site.log
+log ${MAIN_ACTION}
 
 case $MAIN_ACTION in
   "create-tarball")
@@ -706,15 +722,15 @@ case $MAIN_ACTION in
     mainRemoteClone
     ;;
   "create-dirs")
-    echo ${SETTINGS["location"]} >> /tmp/create-test-site.log
+    log ${SETTINGS["location"]}
     createDirectories ${SETTINGS["location"]}
     ;;
   "fix-permissions")
-    echo ${SETTINGS["location"]} >> /tmp/create-test-site.log
+    log ${SETTINGS["location"]}
     fixPermissions ${SETTINGS["location"]}
     ;;
   "drush-archive-restore")
-    echo ${SETTINGS["location"]} >> /tmp/create-test-site.log
+    log ${SETTINGS["location"]}
     drupalDrushArchiveRestore ${SETTINGS["location"]} ${SETTINGS["destination"]} ${SETTINGS["db-url"]}
     ;;
   "create-database")
